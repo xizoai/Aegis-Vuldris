@@ -92,13 +92,14 @@ not roll back the schema without a tested restore path — see
 
 ## Branch protection
 
-`main` should require the following checks to pass before merge:
+`main` should require the following checks, using the job names exactly as they
+appear in the pull-request checks list, to pass before merge:
 
-- `Backend quality / Lint & format`
-- `Backend quality / Type check`
-- `Backend quality / Tests`
-- `Frontend quality / Lint, typecheck, test, build`
-- `Container images / Build & smoke test`
+- `Lint & format`
+- `Type check`
+- `Tests`
+- `Lint, typecheck, test, build`
+- `Build & smoke test`
 
 See [`branch-protection.md`](branch-protection.md) for the setup steps.
 
