@@ -9,14 +9,15 @@ have to be applied once per repository (and re-applied if settings are reset).
 Set **Settings → Branches → Branch protection rules → Add rule** for `main`.
 
 Enable **Require status checks to pass before merging**, and add exactly these
-checks. The names must match the job names in the workflow files or the checks
-will never be satisfied and every PR will hang:
+checks. Use the job names as they appear in the pull-request checks list; GitHub
+does not prefix them with the workflow name here. If the names do not match, the
+checks will never be satisfied and every PR will hang:
 
-- `Backend quality / Lint & format`
-- `Backend quality / Type check`
-- `Backend quality / Tests`
-- `Frontend quality / Lint, typecheck, test, build`
-- `Container images / Build & smoke test`
+- `Lint & format`
+- `Type check`
+- `Tests`
+- `Lint, typecheck, test, build`
+- `Build & smoke test`
 
 A common failure mode is adding a check name that does not exist. If a PR shows
 a check that never reports, the name is wrong — run the workflow once and copy
