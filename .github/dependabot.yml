@@ -24,9 +24,15 @@ updates:
     commit-message:
       prefix: "chore(actions)"
 
-  # Container base images referenced by the Dockerfiles and compose stack.
+  # Container base images referenced by the backend and frontend Dockerfiles.
   - package-ecosystem: docker
-    directory: "/"
+    directory: "/backend"
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: "chore(docker)"
+  - package-ecosystem: docker
+    directory: "/frontend"
     schedule:
       interval: weekly
     commit-message:
