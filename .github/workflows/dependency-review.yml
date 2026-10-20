@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v5
 
       - name: Dependency review
-        uses: actions/dependency-review-action@v4
+        uses: actions/dependency-review-action@v5
         with:
           # Licenses matter as much as CVEs for an Apache-2.0 project.
           fail-on-severity: high
