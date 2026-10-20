@@ -37,7 +37,7 @@ authors = [
 ]
 dependencies = [
     "alembic>=1.14,<2",
-    "argon2-cffi>=23.1,<24",
+    "argon2-cffi>=23.1,<26",
     "cryptography>=49,<51",
     "email-validator>=2.2,<3",
     "fastapi>=0.115,<1",
