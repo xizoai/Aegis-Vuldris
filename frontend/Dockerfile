@@ -9,7 +9,7 @@
 
 # The build context is this directory, so paths are relative to it.
 # ---------------------------------------------------------------- build stage
-FROM node:22-alpine AS builder
+FROM node:26-alpine AS builder
 
 WORKDIR /build
 
