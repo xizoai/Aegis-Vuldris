@@ -1,0 +1,140 @@
+name: aegis-security-gate
+description: >-
+  Run an Aegis Vuldris assessment against a configured target and fail the job only
+  on configured regressions. Exit 2 means a finding matched --fail-on or the
+  baseline regressed; exit 4 means the scanner itself failed and is reported
+  as an error, never as a finding.
+
+inputs:
+  project:
+    description: Aegis Vuldris project id (UUID) holding the tests to run.
+    required: true
+  target:
+    description: Target id (UUID) in that project to attack.
+    required: true
+  email:
+    description: Aegis Vuldris account performing the run (needs project write access; audited as the actor).
+    required: true
+  database-url:
+    description: PostgreSQL connection string of the Aegis Vuldris deployment (use a secret).
+    required: true
+  secret-key:
+    description: SECRET_KEY of the Aegis Vuldris deployment (use a secret).
+    required: true
+  image:
+    description: >-
+      Aegis Vuldris backend container image to run. Required until the first tagged
+      release publishes official images; until then point it at an image you
+      built from the repository (docker build -f backend/Dockerfile .).
+    required: true
+  fail-on:
+    description: Fail when any finding is at or above this severity (info|low|medium|high|critical). Empty disables the threshold.
+    required: false
+    default: ""
+  baseline:
+    description: >-
+      Baseline for regression gating: a generated report id in the project, or
+      a path (relative to the workspace) to a saved JSON report artifact.
+      Empty disables the gate.
+    required: false
+    default: ""
+  fail-on-inconclusive:
+    description: Fail when any run is inconclusive ("true" or "false").
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Run the Aegis Vuldris gate
+      shell: bash
+      env:
+        AEGIS_IMAGE: ${{ inputs.image }}
+        AEGIS_PROJECT: ${{ inputs.project }}
+        AEGIS_TARGET: ${{ inputs.target }}
+        AEGIS_EMAIL: ${{ inputs.email }}
+        AEGIS_DATABASE_URL: ${{ inputs.database-url }}
+        AEGIS_SECRET_KEY: ${{ inputs.secret-key }}
+        AEGIS_FAIL_ON: ${{ inputs.fail-on }}
+        AEGIS_BASELINE: ${{ inputs.baseline }}
+        AEGIS_FAIL_ON_INCONCLUSIVE: ${{ inputs.fail-on-inconclusive }}
+      run: |
+        set -uo pipefail
+
+        args=(aegis run --project "$AEGIS_PROJECT" --target "$AEGIS_TARGET" --email "$AEGIS_EMAIL" --json)
+
+        if [ -n "$AEGIS_FAIL_ON" ]; then
+          args+=(--fail-on "$AEGIS_FAIL_ON")
+        fi
+        if [ -n "$AEGIS_BASELINE" ]; then
+          # A report id passes through untouched; a path is rebased into the
+          # workspace, which is mounted read-only below.
+          if [[ "$AEGIS_BASELINE" =~ ^\{?[0-9a-fA-F-]{36}\}?$ ]]; then
+            args+=(--baseline "$AEGIS_BASELINE")
+          else
+            args+=(--baseline "/workspace/$AEGIS_BASELINE")
+          fi
+        fi
+        if [ "$AEGIS_FAIL_ON_INCONCLUSIVE" = "true" ]; then
+          args+=(--fail-on-inconclusive)
+        fi
+
+        run_json="$RUNNER_TEMP/aegis-run.json"
+        set +e
+        docker run --rm \
+          -e DATABASE_URL="$AEGIS_DATABASE_URL" \
+          -e SECRET_KEY="$AEGIS_SECRET_KEY" \
+          -e APP_ENV=production \
+          -e AEGIS_REPORT_DIR=/tmp/aegis/reports \
+          -v "$GITHUB_WORKSPACE:/workspace:ro" \
+          "$AEGIS_IMAGE" \
+          "${args[@]}" > "$run_json"
+        status=$?
+        set -e
+
+        {
+          echo "## Aegis Vuldris security gate"
+          echo
+          if [ -s "$run_json" ]; then
+            python3 - "$run_json" <<'PY'
+        import json
+        import sys
+
+        with open(sys.argv[1], encoding="utf-8") as handle:
+            payload = json.load(handle)
+
+        totals = payload.get("totals", {})
+        print(f"Project: `{payload.get('project')}`")
+        print(f"Target: `{payload.get('target')}`")
+        print()
+        print("| Run | Result | Findings |")
+        print("|---|---|---|")
+        for record in payload.get("executions", []):
+            print(
+                f"| {record.get('test_name')} | {record.get('result') or record.get('status')} "
+                f"| {len(record.get('findings', []))} |"
+            )
+        print()
+        print(
+            f"**Totals:** {totals.get('run', 0)} run, "
+            f"{totals.get('findings', 0)} finding(s), "
+            f"{totals.get('inconclusive', 0)} inconclusive"
+        )
+        for reason in payload.get("reasons", []):
+            print(f"- {reason}")
+        print()
+        print(f"**Exit code:** {payload.get('exit_code')}")
+        PY
+          else
+            echo "The gate produced no summary (the container failed to start or the run crashed before reporting)."
+          fi
+        } >> "$GITHUB_STEP_SUMMARY"
+
+        if [ "$status" -eq 2 ]; then
+          echo "::error::Aegis Vuldris found a configured regression (exit 2). See the job summary."
+        elif [ "$status" -eq 4 ]; then
+          echo "::error::Aegis Vuldris hit an operational error (exit 4): the scanner failed, this is not a finding."
+        elif [ "$status" -ne 0 ]; then
+          echo "::error::aegis run exited with $status. See the job summary."
+        fi
+        exit "$status"

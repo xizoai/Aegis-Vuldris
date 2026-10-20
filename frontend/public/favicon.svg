@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48" fill="none">
+  <defs>
+    <linearGradient id="aegis" x1="8" y1="4" x2="40" y2="44" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#6366F1" />
+      <stop offset="1" stop-color="#7C3AED" />
+    </linearGradient>
+  </defs>
+  <rect width="48" height="48" rx="11" fill="url(#aegis)" />
+  <path
+    d="M24 9 12.5 13.5v10.2c0 7.4 4.9 13.3 11.5 15.3 6.6-2 11.5-7.9 11.5-15.3V13.5L24 9Z"
+    fill="none"
+    stroke="#fff"
+    stroke-width="2.6"
+    stroke-linejoin="round"
+  />
+  <path
+    d="m19.5 23.5 3.4 3.4 6.2-7"
+    fill="none"
+    stroke="#fff"
+    stroke-width="2.6"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+  />
+</svg>

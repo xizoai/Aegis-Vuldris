@@ -1,0 +1,152 @@
+# Aegis Vuldris — production stack.
+#
+#   AEGIS_BACKEND_IMAGE=... AEGIS_FRONTEND_IMAGE=... docker compose -f docker-compose.production.yml up -d
+#
+# Posture (see docs/adr/ADR-015-production-deployment-operational-architecture.md):
+#   - No service publishes a port to the public Internet. A reverse proxy on the
+#     host terminates TLS and routes to the frontend container.
+#   - PostgreSQL is reachable only on the internal compose network.
+#   - Containers drop all Linux capabilities, run as non-root, and have read-only
+#     root filesystems.
+#   - No secrets appear in this file. They are injected from the host
+#     environment, which in production comes from a secrets manager.
+#     See docs/secrets-management.md.
+
+name: aegis
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:?POSTGRES_USER is required}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_DB: ${POSTGRES_DB:?POSTGRES_DB is required}
+      # Deterministic collation keeps index behaviour stable across hosts.
+      POSTGRES_INITDB_ARGS: "--data-checksums --encoding=UTF8"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    # No `ports:` — the database must not be reachable from outside the network.
+    networks:
+      - internal
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    security_opt:
+      - no-new-privileges:true
+    logging: &logging
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  backend:
+    image: ${AEGIS_BACKEND_IMAGE:?AEGIS_BACKEND_IMAGE is required}
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # Must be a high-entropy value from the secrets manager. The app refuses to
+      # start in production without it.
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-30}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      AEGIS_REPORT_DIR: /var/lib/aegis/reports
+    volumes:
+      - report-data:/var/lib/aegis/reports
+    # No `ports:`. Only the reverse proxy talks to the backend.
+    expose:
+      - "8000"
+    networks:
+      - internal
+      - edge
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # Report generation writes temp files; the app runs as uid 10001.
+      - /tmp:uid=10001,gid=10001,mode=1777
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://127.0.0.1:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+    logging: *logging
+
+  frontend:
+    image: ${AEGIS_FRONTEND_IMAGE:?AEGIS_FRONTEND_IMAGE is required}
+    restart: always
+    depends_on:
+      - backend
+    # No `ports:`. The host reverse proxy targets this port over the edge
+    # network. To publish directly on a VPS, bind to 127.0.0.1 and put a local
+    # proxy in front — never bind 0.0.0.0 without TLS termination.
+    expose:
+      - "8080"
+    networks:
+      - edge
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      # tmpfs mounts are created root-owned by default. nginx runs as the
+      # unprivileged `nginx` user, so each mount must be given ownership and
+      # mode explicitly or it cannot create its temp directories.
+      - /tmp:uid=101,gid=101,mode=1777
+      - /var/cache/nginx:uid=101,gid=101,mode=0750
+      - /var/log/nginx:uid=101,gid=101,mode=0750
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1:8080/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    logging: *logging
+
+  # One-shot migration job. Runs to completion before the new version serves
+  # traffic; `deploy-staging` invokes it with `docker compose run --rm migrate`.
+  migrate:
+    image: ${AEGIS_BACKEND_IMAGE:?AEGIS_BACKEND_IMAGE is required}
+    profiles: ["migrate"]
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      APP_ENV: production
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      # Alembic imports the app settings, which require this even though the
+      # migration itself does not use it.
+      SECRET_KEY: ${SECRET_KEY:?SECRET_KEY is required}
+    command: ["alembic", "upgrade", "head"]
+    networks:
+      - internal
+    security_opt:
+      - no-new-privileges:true
+
+networks:
+  # Database and backend only.
+  internal:
+    driver: bridge
+    internal: true
+  # Anything the reverse proxy needs to reach.
+  edge:
+    driver: bridge
+
+volumes:
+  db-data:
+  report-data:

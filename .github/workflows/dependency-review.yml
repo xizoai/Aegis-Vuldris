@@ -1,0 +1,32 @@
+name: Dependency review
+
+# Flags known-vulnerable or license-incompatible dependencies in a PR before
+# merge. Complements the pip-audit step in backend.yml by reviewing the exact
+# changes a PR proposes to lockfiles and manifests, not just the installed
+# environment.
+
+on:
+  pull_request:
+    paths:
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'frontend/package.json'
+      - 'frontend/package-lock.json'
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: Review changed dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Dependency review
+        uses: actions/dependency-review-action@v4
+        with:
+          # Licenses matter as much as CVEs for an Apache-2.0 project.
+          fail-on-severity: high
+          fail-on-scopes: development, runtime
+          deny-licenses: GPL-2.0, GPL-2.0-only, GPL-3.0, GPL-3.0-only, AGPL-3.0, AGPL-3.0-only

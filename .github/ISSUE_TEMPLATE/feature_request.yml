@@ -1,0 +1,41 @@
+name: Feature request
+description: Suggest a capability for Aegis Vuldris
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Aegis Vuldris is an authorized-testing tool: requests that would help test
+        systems the user does not own, evade detection by a tested system, or
+        add phone-home telemetry will be declined.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: The security or workflow problem, not the solution.
+      placeholder: I'm trying to ... and today Aegis Vuldris cannot ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: What should exist?
+      description: The capability you expect, and how it should behave (exit codes, API shape, UI behavior).
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Existing features that came close, workarounds, or other tools.
+
+  - type: checkboxes
+    id: testing
+    attributes:
+      label: Authorization reminder
+      options:
+        - label: I understand Aegis Vuldris only supports testing systems the user owns or is explicitly authorized to test.
+          required: true

@@ -1,0 +1,52 @@
+# Keep the build context small and, more importantly, keep secrets out of it.
+# Anything matched here can never end up inside a built image.
+
+# Secrets — never send these to the daemon.
+.env
+.env.*
+!.env.example
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Build output
+build/
+dist/
+*.egg-info/
+
+# Node (the frontend is built by its own image; node_modules must never enter
+# any build context)
+node_modules/
+
+# Local data
+docker-data/
+reports/
+tmp/
+temp/
+*.sqlite
+*.sqlite3
+*.log
+
+# Version control and editor
+.git/
+.gitignore
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Agent/editor scratch directories
+.kilo/
+.kombai/
+.qodo/

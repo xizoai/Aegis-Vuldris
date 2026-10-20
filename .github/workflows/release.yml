@@ -1,0 +1,206 @@
+name: Release
+
+# Publishes container images for a tagged release. Staging deployment is
+# optional and enabled with the ENABLE_STAGING_DEPLOY repository variable.
+#
+# Trigger: push a semver tag (see docs/release-process.md).
+#
+#   git tag -a v0.1.0 -m "v0.1.0"
+#   git push origin v0.1.0
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to deploy to staging (tag or branch)'
+        required: true
+        default: main
+
+concurrency:
+  # Never run two releases for staging at once.
+  group: release-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Verify release
+    # Re-run the full gate so an image is never built from an untested commit.
+    uses: ./.github/workflows/backend.yml
+    if: startsWith(github.ref, 'refs/tags/')
+
+  verify-frontend:
+    name: Verify release (frontend)
+    uses: ./.github/workflows/frontend.yml
+    if: startsWith(github.ref, 'refs/tags/')
+
+  images:
+    name: Build & publish images
+    needs: [verify, verify-frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      # Required to push to GHCR. Granted only to this job.
+      packages: write
+    outputs:
+      backend-image: ${{ steps.image.outputs.prefix }}-backend:${{ github.ref_name }}
+      frontend-image: ${{ steps.image.outputs.prefix }}-frontend:${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Set lowercase image prefix
+        id: image
+        env:
+          REPOSITORY: ${{ github.repository }}
+        # GHCR requires lowercase repository names; github.repository preserves
+        # the repository's display case (for example, Aegis-Vuldris).
+        run: echo "prefix=ghcr.io/$(echo "$REPOSITORY" | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive tags
+        id: meta
+        run: |
+          echo "version=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          echo "short=$(echo "$GITHUB_REF_NAME" | sed 's/^v//')" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: backend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.prefix }}-backend:${{ steps.meta.outputs.version }}
+            ${{ steps.image.outputs.prefix }}-backend:${{ steps.meta.outputs.short }}
+            ${{ steps.image.outputs.prefix }}-backend:latest
+          # Provenance attestation and SBOM give a reviewer a way to verify what
+          # actually shipped.
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Build and push frontend image
+        uses: docker/build-push-action@v6
+        with:
+          context: frontend
+          file: frontend/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.image.outputs.prefix }}-frontend:${{ steps.meta.outputs.version }}
+            ${{ steps.image.outputs.prefix }}-frontend:${{ steps.meta.outputs.short }}
+            ${{ steps.image.outputs.prefix }}-frontend:latest
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy-staging:
+    name: Deploy to staging
+    needs: images
+    # Self-hosted installs do not have this staging host. Enable the job with
+    # the ENABLE_STAGING_DEPLOY repository variable and configure the
+    # STAGING_* secrets documented in docs/secrets-management.md.
+    if: startsWith(github.ref, 'refs/tags/') && vars.ENABLE_STAGING_DEPLOY == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    # A failed staging deploy should not silently roll production.
+    steps:
+      - name: Deploy
+        # STAGING_SSH_KEY / STAGING_HOST / STAGING_PATH are repository or
+        # environment secrets. Nothing sensitive is stored in this repository.
+        # See docs/secrets-management.md.
+        env:
+          SSH_KEY: ${{ secrets.STAGING_SSH_KEY }}
+          STAGING_HOST: ${{ secrets.STAGING_HOST }}
+          STAGING_PATH: ${{ secrets.STAGING_PATH }}
+          # A known_hosts line for the staging host, e.g.
+          # "staging.example.com ssh-ed25519 AAAA...". Pinned so an
+          # impersonated host fails the deploy.
+          STAGING_HOST_KEY: ${{ secrets.STAGING_HOST_KEY }}
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+
+          # Trust a pinned host key when one is configured. ssh-keyscan alone
+          # is trust-on-first-use: it accepts whatever key the host presents
+          # at that moment, so it cannot detect a swapped or impersonated
+          # server. The fallback keeps the workflow runnable before the secret
+          # is provisioned, but logs a warning.
+          if [ -n "${STAGING_HOST_KEY:-}" ]; then
+            printf '%s\n' "$STAGING_HOST_KEY" > ~/.ssh/known_hosts
+          else
+            echo "::warning::STAGING_HOST_KEY is not set; falling back to ssh-keyscan (trust-on-first-use)."
+            ssh-keyscan -H "$STAGING_HOST" >> ~/.ssh/known_hosts
+          fi
+
+          rsync -az --delete \
+            --exclude '.env' \
+            --exclude 'docker-data' \
+            docker-compose.production.yml "$STAGING_HOST:$STAGING_PATH/"
+
+          ssh "$STAGING_HOST" "cd $STAGING_PATH && \
+            export AEGIS_BACKEND_IMAGE='${{ needs.images.outputs.backend-image }}' && \
+            export AEGIS_FRONTEND_IMAGE='${{ needs.images.outputs.frontend-image }}' && \
+            docker compose -f docker-compose.production.yml pull && \
+            # Migrations run before the new version takes traffic.
+            docker compose -f docker-compose.production.yml run --rm migrate && \
+            docker compose -f docker-compose.production.yml up -d && \
+            docker compose -f docker-compose.production.yml ps"
+
+      - name: Verify staging
+        run: |
+          set -euo pipefail
+          for i in $(seq 1 30); do
+            if curl --fail --silent "https://${{ secrets.STAGING_HOST }}/api/v1/system/ready" | grep -q '"status":"ok"'; then
+              echo "staging is serving"
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "staging did not become ready"
+          exit 1
+
+  github-release:
+    name: Publish GitHub release
+    # The release documents a verified tag: it is published after the images
+    # exist. If staging is enabled, it must also succeed; when staging is
+    # disabled (the default for self-hosted installs), the release still ships.
+    needs: [images, deploy-staging]
+    if: |
+      always() &&
+      startsWith(github.ref, 'refs/tags/') &&
+      needs.images.result == 'success' &&
+      (needs.deploy-staging.result == 'success' || needs.deploy-staging.result == 'skipped')
+    runs-on: ubuntu-latest
+    permissions:
+      # Creating a release writes to the repository; scoped to this job only.
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The changelog and migrations of the tagged commit, not the branch head.
+          ref: ${{ github.ref }}
+
+      - name: Extract release notes
+        # The changelog section for the tag plus an Upgrade notes block
+        # (migration head, breaking-changes pointer). Fails loudly when the
+        # tag has no changelog entry, so a release cannot ship without notes.
+        run: python scripts/extract_release_notes.py "${{ github.ref_name }}" > release_notes.md
+
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes-file release_notes.md

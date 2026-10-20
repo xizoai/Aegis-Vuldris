@@ -1,0 +1,19 @@
+cff-version: 1.2.0
+message: "If you use Aegis Vuldris in research or commercial security work, please cite it using the metadata below."
+title: "Aegis Vuldris"
+abstract: "Self-hosted, evidence-first security assurance for AI model endpoints: adversarial testing, two-stage grading, and replayable evidence."
+type: software
+authors:
+  - name: "Aegis Vuldris Contributors"
+repository-code: "https://github.com/xizoai/Aegis-Vuldris"
+url: "https://github.com/xizoai/Aegis-Vuldris"
+license: "Apache-2.0"
+version: "0.1.0"
+keywords:
+  - ai-security
+  - llm-security
+  - model-security
+  - prompt-injection
+  - jailbreak
+  - security-testing
+  - self-hosted

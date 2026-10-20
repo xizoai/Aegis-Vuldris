@@ -1,0 +1,15 @@
+title = "Aegis Vuldris"
+
+[extend]
+useDefault = true
+
+# These tests deliberately contain credential-shaped strings to exercise
+# redaction and evidence handling. They are synthetic and are not valid tokens.
+[[allowlists]]
+description = "Synthetic credentials in redaction and evidence tests"
+paths = [
+  '''tests/api/test_evidence_handling\.py''',
+  '''tests/api/test_triage\.py''',
+  '''tests/services/test_evidence_redaction\.py''',
+  '''tests/services/test_redaction\.py''',
+]

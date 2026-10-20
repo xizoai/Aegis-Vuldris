@@ -1,0 +1,26 @@
+# The frontend image builds from the frontend/ directory, so this context only
+# ever needs the web app. Nothing here is a secret except .env files, which are
+# excluded explicitly.
+
+# Secrets — never send these to the daemon.
+.env
+.env.*
+!.env.example
+
+node_modules/
+dist/
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Not part of the web app build
+Dockerfile
+.dockerignore

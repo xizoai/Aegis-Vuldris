@@ -1,0 +1,67 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
+
+# IDE
+.vscode/
+.idea/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Build
+build/
+dist/
+*.egg-info/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Local databases / temporary files
+*.sqlite
+*.sqlite3
+tmp/
+temp/
+# Stray editor/agent temp files at the repo root (e.g. tmpgvwzzssn).
+tmp????????
+
+# Docker
+docker-data/
+
+# AegisAI generated reports
+reports/
+
+# Extracted attack library (static YAML, regenerated from upstream sources)
+garak_extracted/
+
+# Agent tooling: local worktrees and UI state.
+# Worktrees contain full copies of the project including a real .env, so they
+# must never be committed. These rules are version-controlled rather than left
+# in .git/info/exclude so the protection travels with the repository.
+.kilo/
+.kilocode/worktrees/
+.kilocode/agent-manager.json

@@ -1,0 +1,66 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Paste the output of `aegis doctor` below — it is designed to be
+        paste-ready. If you cannot run it, fill in the environment section
+        manually.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, plus what you expected instead.
+      placeholder: |
+        Steps to reproduce:
+        1. ...
+        2. ...
+
+        Expected: ...
+        Actual: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "Output of `aegis doctor`"
+      description: Run `aegis doctor` (or `docker compose exec backend aegis doctor`) and paste the output.
+      render: text
+    validations:
+      required: true
+
+  - type: dropdown
+    id: quickstart
+    attributes:
+      label: Did the quick start work on a clean machine?
+      description: This tells us whether new users are hitting the same wall.
+      options:
+        - "Yes"
+        - "No"
+        - "I did not use the quick start"
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: OS, Docker/Compose version, Python version, deployment mode (compose / source), target provider.
+      placeholder: |
+        OS: ...
+        Docker: ...
+        Deployment: docker compose
+        Target provider: openai_compatible
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: "`docker compose logs backend` or CLI output. Redact secrets, model responses, and target endpoints — evidence may contain private data."
+      render: text

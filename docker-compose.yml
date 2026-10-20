@@ -1,0 +1,107 @@
+# Aegis Vuldris — local development stack.
+#
+#   docker compose up --build
+#
+# Brings up PostgreSQL, a one-shot schema migration, the FastAPI backend, and
+# the static frontend. The migration runs before any schema-dependent service
+# starts, so a fresh machine reaches a working UI with no manual Alembic step.
+# Only the frontend port is published for local convenience; in production the
+# backend and database are not exposed to the public Internet (see
+# docs/adr/ADR-015-production-deployment-operational-architecture.md).
+#
+# All values here are LOCAL DEVELOPMENT DEFAULTS. They are intentionally weak
+# and must never be reused in any deployed environment. Real secrets come from
+# the host environment or a secrets manager — never from a committed file.
+
+name: aegis
+
+# The one-shot migrate container and the long-running backend share this build
+# and environment so the schema can never be applied by an image or settings
+# set that differs from the one that then serves traffic.
+x-backend-build: &backend-build
+  context: .
+  dockerfile: backend/Dockerfile
+
+x-backend-environment: &backend-environment
+  APP_ENV: ${APP_ENV:-development}
+  DATABASE_URL: >-
+    postgresql+psycopg://${POSTGRES_USER:-aegis}:${POSTGRES_PASSWORD:-aegis_dev_password}@db:5432/${POSTGRES_DB:-aegis}
+  # Development-only fallback key. The app requires SECRET_KEY for staging
+  # and production and will refuse to start without one.
+  SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in your environment or .env before starting the stack}
+  LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  AEGIS_REPORT_DIR: /var/lib/aegis/reports
+  # Opt-in: permits loopback/private target endpoints. Off by default because
+  # it is what stops Aegis Vuldris from being pointed at internal infrastructure.
+  # Set ALLOW_LOCAL_TARGETS=true to test a model running on your machine.
+  ALLOW_LOCAL_TARGETS: ${ALLOW_LOCAL_TARGETS:-false}
+
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aegis}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-aegis_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-aegis}
+      # Enforce UTF-8: the app stores Unicode payloads as JSONB, and a
+      # non-UTF8 cluster corrupts non-ASCII payloads on write.
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    ports:
+      # Bound to loopback only: the database is reachable from this machine but
+      # not from the network.
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aegis} -d ${POSTGRES_DB:-aegis}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  # One-shot schema migration. `docker compose up` waits for this container to
+  # exit 0 before starting the backend (and, once it exists, the WS3 worker), so
+  # a failed migration stops the stack instead of serving traffic on a stale
+  # schema. The long-running services still never migrate themselves.
+  migrate:
+    build: *backend-build
+    environment: *backend-environment
+    command: ["alembic", "upgrade", "head"]
+    restart: "no"
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    build: *backend-build
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    environment: *backend-environment
+    volumes:
+      # Report artifacts must survive container replacement.
+      - report-data:/var/lib/aegis/reports
+    ports:
+      # Loopback only, for local API exploration and the /docs UI. The frontend
+      # container reaches the backend over the compose network instead.
+      - "127.0.0.1:8000:8000"
+
+  frontend:
+    build:
+      # Context is the frontend directory so the web build never receives the
+      # backend sources.
+      context: ./frontend
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "127.0.0.1:8080:8080"
+
+volumes:
+  db-data:
+  report-data:

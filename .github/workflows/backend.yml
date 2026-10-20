@@ -1,0 +1,134 @@
+name: Backend quality
+
+# Fast feedback on every push and pull request. The Postgres service is required
+# because the test suite and `alembic check` both need a real database — the
+# models use JSONB and native enums, so SQLite is not a valid substitute.
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+
+concurrency:
+  # Cancel superseded runs for the same ref, but never cancel main.
+  group: backend-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint & format
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "ruff>=0.16.6,<1"
+
+      - name: Ruff lint
+        # Run from the repository root so Ruff uses the authoritative project
+        # configuration in pyproject.toml and checks both application and test
+        # code without relying on the runner's current directory.
+        run: ruff check backend tests scripts examples
+
+      - name: Ruff format check
+        run: ruff format --check backend tests scripts examples
+
+  typecheck:
+    name: Type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install . "pyright>=1.1.413,<2" "pytest>=9.1,<10" "httpx2>=2.13,<3"
+
+      - name: Pyright
+        run: .venv/bin/pyright
+
+  test:
+    name: Tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: aegis
+          POSTGRES_PASSWORD: aegis_ci_password
+          POSTGRES_DB: aegis_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U aegis -d aegis_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql+psycopg://aegis:aegis_ci_password@localhost:5432/aegis_test
+      # Non-production key used only for the duration of the run.
+      SECRET_KEY: ci_test_secret_key_not_used_outside_ci_000000
+      APP_ENV: testing
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      - name: Install dependencies
+        # The project declares dev tooling under PEP 735 [dependency-groups],
+        # which pip cannot install as an extra. Install the test requirements
+        # explicitly instead.
+        run: |
+          python -m pip install --upgrade pip
+          # `build` lets the packaging test actually build the wheel instead of
+          # skipping, so the wheel's CLI and bundled YAML are validated in CI.
+          pip install . "pytest>=9.1,<10" "httpx2>=2.13,<3" "build>=1.2,<2"
+
+      - name: Apply migrations
+        run: alembic upgrade head
+
+      - name: Verify model/migration parity
+        # Fails if a model change has no matching migration.
+        run: alembic check
+
+      - name: Run pytest
+        run: pytest -q --maxfail=1
+
+      - name: Dependency audit
+        # Fails the build on a known-CVE dependency.
+        #
+        # The project is installed from this checkout rather than PyPI, and
+        # --strict treats an unauditable distribution as a failure. Remove it
+        # from the environment first; its third-party dependencies stay
+        # installed, so they are still audited.
+        run: |
+          pip install pip-audit
+          pip uninstall -y aegis-vuldris
+          pip-audit --strict --progress-spinner off

@@ -1,0 +1,40 @@
+name: ci-backend
+
+# Mirrors the `test` job in .github/workflows/backend.yml so the CI path can be
+# reproduced locally. Run with:
+#   docker compose -f docker-compose.ci.yml up --abort-on-container-exit --exit-code-from ci
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aegis
+      POSTGRES_PASSWORD: aegis_ci_password
+      POSTGRES_DB: aegis_test
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aegis -d aegis_test"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  ci:
+    image: python:3.12-slim
+    working_dir: /src
+    volumes:
+      - .:/src
+    environment:
+      DATABASE_URL: postgresql+psycopg://aegis:aegis_ci_password@db:5432/aegis_test
+      SECRET_KEY: ci_test_secret_key_not_used_outside_ci_000000
+      APP_ENV: testing
+    depends_on:
+      db:
+        condition: service_healthy
+    command: >
+      sh -c "set -ex
+      && python -m pip install --upgrade pip
+      && pip install . 'pytest>=9.1,<10' 'httpx2>=2.13,<3'
+      && alembic upgrade head
+      && alembic check
+      && pytest -q --maxfail=1
+      "

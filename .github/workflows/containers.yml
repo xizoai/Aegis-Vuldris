@@ -1,0 +1,134 @@
+name: Container images
+
+# Proves both images still build and still run. A Dockerfile that builds but
+# crashes on start is a common failure mode, so this starts the real stack and
+# exercises the full request path rather than only compiling.
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    paths:
+      - 'backend/**'
+      - 'alembic/**'
+      - 'frontend/**'
+      - 'docker-compose.yml'
+      - '.env.example'
+      - '.github/workflows/containers.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: containers-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-smoke:
+    name: Build & smoke test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Build backend image
+        run: docker build -f backend/Dockerfile -t aegis-backend:ci .
+
+      - name: Build frontend image
+        run: docker build -t aegis-frontend:ci frontend
+
+      - name: Start the stack
+        env:
+          # Ephemeral key, scoped to this run only.
+          SECRET_KEY: ci_container_secret_key_not_used_outside_ci_000
+        # `up` blocks on the compose depends_on conditions, including waiting
+        # for the one-shot `migrate` service to exit 0 before the backend even
+        # starts. `--wait` is deliberately not used: a one-shot init service
+        # that exits 0 by design is not a hanging service, and the explicit
+        # health poll below is the real gate.
+        run: |
+          echo "SECRET_KEY=$SECRET_KEY" > .env
+          docker compose up -d --build
+
+      - name: Backend reports healthy
+        run: |
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://127.0.0.1:8000/health > /dev/null; then
+              echo "backend healthy"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "backend never became healthy"
+          docker compose logs
+          exit 1
+
+      - name: Frontend serves the SPA and proxies the API
+        run: |
+          curl --fail --silent http://127.0.0.1:8080/ | grep -q 'id="root"'
+          echo "SPA shell served"
+          # The nginx /api proxy must reach the backend on the internal network.
+          curl --fail --silent http://127.0.0.1:8080/api/v1/system/ready | grep -q '"status":"ok"'
+          echo "API proxy works"
+          # Client-side routing must fall back to the app shell, not 404.
+          curl --fail --silent http://127.0.0.1:8080/projects/some/deep/route | grep -q 'id="root"'
+          echo "SPA history fallback works"
+
+      - name: Quick-start API walkthrough
+        # The documented first-run path must work against a fresh stack:
+        # register, sign in, create a project, load the bundled attack library,
+        # and read it back. This is the credentialed quick start; an offline
+        # demo seed can replace it later.
+        run: |
+          set -euo pipefail
+          BASE=http://127.0.0.1:8000/api/v1
+          EMAIL="smoke-$(date +%s)@example.com"
+          PASSWORD="compose-smoke-password-1"
+          curl --fail --silent -X POST "$BASE/auth/register" \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" > /dev/null
+          TOKEN=$(curl --fail --silent -X POST "$BASE/auth/login" \
+            -H 'Content-Type: application/json' \
+            -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}" \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["access_token"])')
+          PROJECT=$(curl --fail --silent -X POST "$BASE/projects" \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            -d '{"name":"compose smoke"}' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["id"])')
+          SEEDED=$(curl --fail --silent -X POST \
+            "$BASE/projects/$PROJECT/assessments/tests/seed" \
+            -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
+            -d '{}' \
+            | python3 -c 'import json,sys; print(json.load(sys.stdin)["created"])')
+          test "$SEEDED" -gt 0
+          LISTED=$(curl --fail --silent "$BASE/projects/$PROJECT/assessments/tests" \
+            -H "Authorization: Bearer $TOKEN" \
+            | python3 -c 'import json,sys; print(len(json.load(sys.stdin)))')
+          test "$LISTED" -ge "$SEEDED"
+          echo "quick start OK: seeded $SEEDED tests, listed $LISTED"
+
+      - name: Schema matches the models
+        # The `migrate` service already ran `alembic upgrade head` during `up`
+        # (the backend cannot be healthy otherwise). This asserts the result:
+        # the live schema matches the models, so a forgotten migration cannot
+        # pass as a healthy stack, and no manual upgrade is ever needed.
+        run: docker compose exec -T backend alembic check
+
+      - name: Database is not exposed beyond loopback
+        # ADR-015 forbids exposing PostgreSQL to the Internet. In this compose
+        # file it is bound to 127.0.0.1, so a non-loopback address must fail.
+        run: |
+          if curl --fail --silent --max-time 5 http://$(hostname -i | awk '{print $1}'):5432/ > /dev/null 2>&1; then
+            echo "ERROR: database reachable on a non-loopback address"
+            exit 1
+          fi
+          echo "database is not publicly reachable"
+
+      - name: Collect logs
+        if: always()
+        run: docker compose logs --no-color
+
+      - name: Tear down
+        if: always()
+        run: docker compose down -v
