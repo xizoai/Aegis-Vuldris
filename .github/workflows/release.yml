@@ -79,7 +79,7 @@ jobs:
           echo "short=$(echo "$GITHUB_REF_NAME" | sed 's/^v//')" >> "$GITHUB_OUTPUT"
 
       - name: Build and push backend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: backend/Dockerfile
@@ -96,7 +96,7 @@ jobs:
           cache-to: type=gha,mode=max
 
       - name: Build and push frontend image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: frontend
           file: frontend/Dockerfile
