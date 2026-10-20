@@ -29,7 +29,7 @@ ENV VITE_API_BASE_URL=/api/v1
 RUN npm run build
 
 # -------------------------------------------------------------- runtime stage
-FROM nginx:1.27-alpine AS runtime
+FROM nginx:1.31-alpine AS runtime
 
 # Replace the stock config entirely: the SPA needs history fallback and an
 # explicit /api proxy, neither of which the default config provides.
