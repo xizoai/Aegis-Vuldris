@@ -50,7 +50,7 @@ jobs:
       backend-image: ${{ steps.image.outputs.prefix }}-backend:${{ github.ref_name }}
       frontend-image: ${{ steps.image.outputs.prefix }}-frontend:${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
 
       - name: Set lowercase image prefix
         id: image
@@ -194,7 +194,7 @@ jobs:
       # Creating a release writes to the repository; scoped to this job only.
       contents: write
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v7
         with:
           # The changelog and migrations of the tagged commit, not the branch head.
           ref: ${{ github.ref }}
