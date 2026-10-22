@@ -1713,7 +1713,7 @@ button.icon-ghost:hover:not(:disabled) {
 }
 
 .executions-table th:nth-child(3) {
-  width: 5rem;
+  width: 7rem;
 }
 
 .executions-table th:nth-child(4) {
@@ -1726,8 +1726,9 @@ button.icon-ghost:hover:not(:disabled) {
 
 /* The medium date + short time is wider than the fixed Started column; let it
    wrap rather than paint over the status badge. */
-.executions-table time {
+.executions-table .badge {
   white-space: normal;
+  word-break: break-word;
 }
 
 /* The execution row has up to five controls. Stacking them keeps the reason

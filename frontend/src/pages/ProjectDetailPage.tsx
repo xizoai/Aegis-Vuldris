@@ -87,6 +87,7 @@ export function ProjectDetailPage() {
   const [seeding, setSeeding] = useState(false)
   const [baselineReportId, setBaselineReportId] = useState('')
   const [currentReportId, setCurrentReportId] = useState('')
+  const [latestReportId, setLatestReportId] = useState('')
   const [comparison, setComparison] = useState<ReportComparison | null>(null)
   const [comparing, setComparing] = useState(false)
   // Destructive actions go through a styled confirmation dialog instead of
@@ -671,6 +672,30 @@ export function ProjectDetailPage() {
     }
   }
 
+  async function handleExecutionReport(execution: Execution) {
+    setError(null)
+    setNotice(null)
+    try {
+      const report = await reportApi.create(id, {
+        title: `Execution ${shortId(execution.id)}`,
+        format: 'markdown',
+      })
+      const generated = await reportApi.generate(id, report.id)
+      setLatestReportId(generated.id)
+      setNotice(`Report v${generated.version} generated for execution ${shortId(execution.id)}.`)
+      await load()
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'Could not generate report.')
+    }
+  }
+
+  async function handleDownloadLatestReport() {
+    if (!latestReportId) return
+    const report = reports.find((r) => r.id === latestReportId)
+    if (!report) return
+    await handleDownloadReport(report)
+  }
+
   async function handleDownloadReport(report: Report) {
     setError(null)
     try {
@@ -1050,6 +1075,7 @@ export function ProjectDetailPage() {
             <tbody>
               {executions.map((execution) => {
                 return (
+                  <>
                   <tr key={execution.id}>
                     <td>
                       <time dateTime={execution.started_at ?? execution.created_at}>
@@ -1074,18 +1100,27 @@ export function ProjectDetailPage() {
                       <div className="executions-actions">
                         <button
                           type="button"
-                          onClick={() => void handleSelectExecution(execution.id)}
-                        >
-                          Findings
-                        </button>{' '}
-                        <button
-                          type="button"
                           className="secondary sm"
                           onClick={() => void handleToggleTranscript(execution.id)}
                         >
                           {transcriptExecutionId === execution.id
                             ? 'Hide transcript'
                             : 'Transcript'}
+                        </button>{' '}
+                        <button
+                          type="button"
+                          className="secondary sm"
+                          onClick={() => void handleExecutionReport(execution)}
+                        >
+                          Generate report
+                        </button>{' '}
+                        <button
+                          type="button"
+                          className="secondary sm"
+                          disabled={!latestReportId}
+                          onClick={() => void handleDownloadLatestReport()}
+                        >
+                          Download report
                         </button>{' '}
                         {execution.run_manifest && (
                           <button
@@ -1129,26 +1164,32 @@ export function ProjectDetailPage() {
                       </div>
                     </td>
                   </tr>
+                  {transcriptExecutionId === execution.id && (
+                    <tr>
+                      <td colSpan={5}>
+                        <TranscriptPanel
+                          steps={transcriptByExecution[execution.id]}
+                          busy={transcriptBusyId === execution.id}
+                          error={transcriptErrors[execution.id] ?? null}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  {manifestExecutionId === execution.id && (
+                    <tr>
+                      <td colSpan={5}>
+                        <RunManifestPanel
+                          manifest={execution.run_manifest ?? null}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                  </>
                 )
               })}
             </tbody>
           </table>
           </div>
-        )}
-        {transcriptExecutionId && (
-          <TranscriptPanel
-            steps={transcriptByExecution[transcriptExecutionId]}
-            busy={transcriptBusyId === transcriptExecutionId}
-            error={transcriptErrors[transcriptExecutionId] ?? null}
-          />
-        )}
-        {manifestExecutionId && (
-          <RunManifestPanel
-            manifest={
-              executions.find((execution) => execution.id === manifestExecutionId)
-                ?.run_manifest ?? null
-            }
-          />
         )}
       </div>
 
